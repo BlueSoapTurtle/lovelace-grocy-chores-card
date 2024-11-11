@@ -353,9 +353,11 @@ class GrocyChoresCard extends LitElement {
         return html`
             <div class="secondary">
                 ${this._translate("Due")}:
-                <span class=${this._dueHtmlClass(item.__due_in_days) ?? nothing}>${this._formatDueDate(item.__due_date, item.__due_in_days) ?? "-"}</span>
+                <span class=${this._dueHtmlClass(item.__due_in) ?? nothing}>
+                    ${this._formatDueDate(item.__due_date, item.__due_in, item.track_date_only) ?? "-"}
+                </span>
             </div>
-        `
+        `;
     }
 
     _renderItemName(item) {
@@ -446,34 +448,44 @@ class GrocyChoresCard extends LitElement {
         `
     }
 
-    _calculateDaysTillNow(date) {
+    _calculateDueTime(date) {
         const now = DateTime.now();
-        return date.startOf('day').diff(now.startOf('day'), 'days').days;
+        return date.diff(now, ['days', 'hours', 'minutes', 'seconds']);
     }
 
-    _dueHtmlClass(dueInDays) {
-        if (dueInDays == null) {
-            return null;
-        } else if (dueInDays < 0) {
+    _dueHtmlClass(dueIn) {
+        const totalMilliseconds = dueIn.as('milliseconds');
+        if (totalMilliseconds < 0) {
             return "overdue";
-        } else if (dueInDays < 1) {
+        } else if (totalMilliseconds < 86400000) { // Less than a day in milliseconds
             return "due-today";
         } else {
             return "not-due";
         }
     }
 
-    _formatDueDate(dueDate, dueInDays) {
-        if (dueInDays < 0) {
+    _formatDueDate(dueDate, dueIn, trackDateOnly) {
+        const totalMilliseconds = dueIn.as('milliseconds');
+        if (totalMilliseconds < 0) {
             return this._translate("Overdue");
-        } else if (dueInDays < 1) {
-            return this._translate("Today");
-        } else if (dueInDays < 2) {
+        } else if (totalMilliseconds < 86400000) {
+            // Due today
+            let timeString = ` ${this._translate("at")} ${dueDate.toLocaleString({
+                hour: 'numeric',
+                minute: 'numeric',
+                hour12: !this.use_24_hours
+            })}`;
+            if (!trackDateOnly) {
+                timeString = ` ${this._translate("at")} ${dueDate.toLocaleString(DateTime.TIME_SIMPLE)}`;
+            }
+            return `${this._translate("Today")}${timeString}`;
+        } else if (totalMilliseconds < 172800000) {
             return this._translate("Tomorrow");
-        } else if (dueInDays < this.due_in_days_threshold) {
-            return this._translate("In {number} days", dueInDays);
+        } else if (totalMilliseconds < this.due_in_days_threshold * 86400000) {
+            const days = Math.floor(dueIn.as('days'));
+            return this._translate("In {number} days", days);
         } else {
-            return this._formatDate(dueDate, true);
+            return this._formatDate(dueDate, trackDateOnly);
         }
     }
 
@@ -616,11 +628,14 @@ class GrocyChoresCard extends LitElement {
                 item.__user_id = item.assigned_to_user.id;
                 item.assigned_to_name = item.assigned_to_user.display_name;
             }
-            
-            if (item.due_date != null) {
-                item.__due_date = this._toDateTime(item.due_date);
-                item.__due_in_days = this._calculateDaysTillNow(item.__due_date);
+
+            if (item.due_date != null || item.next_estimated_execution_time != null) {
+                const dueDate = item.due_date ? this._toDateTime(item.due_date) : this._toDateTime(item.next_estimated_execution_time);
+                item.__due_date = dueDate;
+                item.__due_in = this._calculateDueTime(dueDate);
             }
+
+            item.track_date_only = item.track_date_only ?? false; // Default to false if undefined
 
             this._formatItemDescription(item);
 
@@ -653,13 +668,15 @@ class GrocyChoresCard extends LitElement {
 
             if (item.next_estimated_execution_time != null && item.next_estimated_execution_time.slice(0, 4) !== 2999) {
                 item.__due_date = this._toDateTime(item.next_estimated_execution_time);
-                item.__due_in_days = this._calculateDaysTillNow(item.__due_date);
+                item.__due_in_days = this._calculateDueTime(item.__due_date);
             }
 
             if (item.last_tracked_time) {
                 item.__last_tracked_date = this._toDateTime(item.last_tracked_time);
-                item.__last_tracked_days = Math.abs(this._calculateDaysTillNow(item.__last_tracked_date));
+                item.__last_tracked_days = Math.abs(this._calculateDueTime(item.__last_tracked_date));
             }
+
+            item.track_date_only = item.track_date_only ?? false; // Default to false if undefined
 
             this._formatItemDescription(item);
 
@@ -853,8 +870,8 @@ class GrocyChoresCard extends LitElement {
 // Configure the preview in the Lovelace card picker
 window.customCards = window.customCards || [];
 window.customCards.push({
-    type: 'grocy-chores-card',
-    name: 'Grocy Chores and Tasks Card',
+    type: 'grocy-chores-card-extras',
+    name: 'Grocy Chores and Tasks Card Extras',
     preview: false,
     description: 'A card used to display chores and/or tasks from the Grocy custom component.',
     documentationURL: 'https://github.com/isabellaalstrom/lovelace-grocy-chores-card'
